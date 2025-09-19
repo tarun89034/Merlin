@@ -27,6 +27,7 @@ export default function Features() {
   const [textToSpeak, setTextToSpeak] = useState('')
   const [voice, setVoice] = useState('default')
   const [isPlaying, setIsPlaying] = useState(false)
+  const [ttsText, setTtsText] = useState('')
 
   // File Upload State
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -78,6 +79,7 @@ export default function Features() {
     try {
       const result = await api.textToSpeech(textToSpeak, voice)
       setResults(prev => ({ ...prev, textToSpeech: result }))
+      setTtsText(textToSpeak)
       // Simulate audio playback
       setIsPlaying(true)
       setTimeout(() => setIsPlaying(false), 3000)
@@ -108,7 +110,9 @@ export default function Features() {
       const result = await api.uploadFile(selectedFile)
       setResults(prev => ({ ...prev, fileUpload: result }))
       setUploadProgress(100)
-      setDocumentId(result.file_id.toString())
+      if (result && result.document_id) {
+        setDocumentId(String(result.document_id))
+      }
     } catch (error) {
       setResults(prev => ({ ...prev, fileUpload: { error: 'Failed to upload file' } }))
     }
@@ -131,6 +135,75 @@ export default function Features() {
     const file = event.target.files?.[0]
     if (file) {
       setSelectedFile(file)
+    }
+  }
+
+  const playTTSAudio = (ttsResult: any) => {
+    if (!ttsResult) {
+      alert('No TTS result available')
+      return
+    }
+
+    // Check if it's a Web Speech API fallback
+    if (ttsResult.audio_url && ttsResult.audio_url.startsWith('webspeech:')) {
+      const text = ttsResult.audio_url.replace('webspeech:', '')
+      if ('speechSynthesis' in window) {
+        const utterance = new SpeechSynthesisUtterance(text)
+        
+        // Set voice based on selection
+        const voices = speechSynthesis.getVoices()
+        if (voice === 'female' && voices.length > 1) {
+          utterance.voice = voices.find(voice => voice.name.toLowerCase().includes('female')) || voices[1]
+        } else if (voice === 'male' && voices.length > 0) {
+          utterance.voice = voices.find(voice => voice.name.toLowerCase().includes('male')) || voices[0]
+        }
+        
+        utterance.rate = 0.9
+        utterance.pitch = 1
+        utterance.volume = 0.8
+        
+        speechSynthesis.speak(utterance)
+      } else {
+        alert('Text-to-speech is not supported in your browser')
+      }
+      return
+    }
+
+    // Try to play the audio file from backend
+    if (ttsResult.audio_url) {
+      const audio = new Audio(ttsResult.audio_url)
+      
+      audio.onloadstart = () => {
+        console.log('Loading audio...')
+      }
+      
+      audio.oncanplay = () => {
+        console.log('Audio ready to play')
+        audio.play().catch(error => {
+          console.error('Audio playback failed:', error)
+          // Fallback to Web Speech API
+          if ('speechSynthesis' in window && ttsText) {
+            const utterance = new SpeechSynthesisUtterance(ttsText)
+            speechSynthesis.speak(utterance)
+          }
+        })
+      }
+      
+      audio.onerror = (error) => {
+        console.error('Audio loading failed:', error)
+        // Fallback to Web Speech API
+        if ('speechSynthesis' in window && ttsText) {
+          const utterance = new SpeechSynthesisUtterance(ttsText)
+          speechSynthesis.speak(utterance)
+        } else {
+          alert('Audio playback failed and Web Speech API is not available')
+        }
+      }
+      
+      // Load the audio
+      audio.load()
+    } else {
+      alert('No audio URL available')
     }
   }
 
@@ -447,9 +520,12 @@ export default function Features() {
                   </div>
                 )}
                 <div className="mt-4 flex items-center gap-4">
-                  <button className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center gap-2">
+                  <button 
+                    onClick={() => playTTSAudio(results.textToSpeech)}
+                    className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+                  >
                     <Play className="w-4 h-4" />
-                    Play Audio (Simulated)
+                    Play Audio
                   </button>
                   <div className="flex-1 bg-gray-700 rounded-full h-2">
                     <div className="bg-green-500 h-2 rounded-full w-0"></div>

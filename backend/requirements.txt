@@ -16,3 +16,4 @@ sqlalchemy==2.0.23
 alembic==1.13.1
 httpx==0.25.2
 aiofiles==23.2.1
+pyttsx3==2.90

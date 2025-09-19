@@ -1,6 +1,6 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import uvicorn
@@ -15,6 +15,7 @@ from PIL import Image
 import io
 from sqlalchemy import text
 import time
+import hashlib
 
 # Import database components
 from database import get_db, init_db, User, Document, Conversation, Analytics
@@ -76,20 +77,47 @@ def generate_summary(text: str, max_length: int = 150) -> str:
     if not text or len(text.strip()) == 0:
         return "No text provided for summarization."
     
-    # Simple extractive summarization (in production, use AI models)
-    sentences = text.split('.')
-    sentences = [s.strip() for s in sentences if s.strip()]
+    # Clean and prepare text
+    text = text.strip()
     
-    if len(sentences) <= 3:
+    # If text is already short, return as is
+    if len(text) <= max_length:
         return text
     
-    # Take first few sentences and key sentences
-    summary_sentences = sentences[:2]
-    if len(sentences) > 5:
-        summary_sentences.append(sentences[len(sentences)//2])
+    # Split into sentences
+    import re
+    sentences = re.split(r'[.!?]+', text)
+    sentences = [s.strip() for s in sentences if s.strip() and len(s.strip()) > 10]
     
-    summary = '. '.join(summary_sentences) + '.'
+    if len(sentences) <= 1:
+        # If only one sentence, truncate it
+        return text[:max_length-3] + "..." if len(text) > max_length else text
     
+    # Extractive summarization: select key sentences
+    summary_sentences = []
+    current_length = 0
+    
+    # Always include first sentence
+    if sentences:
+        summary_sentences.append(sentences[0])
+        current_length = len(sentences[0])
+    
+    # Add middle and last sentences if they fit
+    if len(sentences) > 2:
+        middle_idx = len(sentences) // 2
+        last_idx = len(sentences) - 1
+        
+        for idx in [middle_idx, last_idx]:
+            sentence = sentences[idx]
+            if current_length + len(sentence) + 2 <= max_length:  # +2 for ". "
+                summary_sentences.append(sentence)
+                current_length += len(sentence) + 2
+    
+    summary = '. '.join(summary_sentences)
+    if not summary.endswith('.'):
+        summary += '.'
+    
+    # Final length check
     if len(summary) > max_length:
         summary = summary[:max_length-3] + "..."
     
@@ -226,8 +254,29 @@ async def visual_qa(
         image_content = await image.read()
         image_analysis = analyze_image(image_content)
         
-        # Generate answer based on image analysis and question
-        answer = f"Based on the visual analysis: {image_analysis}\n\nRegarding your question '{question}': This image appears to contain visual elements that may help answer your question. The analysis shows structural and content information that could be relevant to your inquiry."
+        # Generate contextual answer based on image analysis and question
+        question_lower = question.lower()
+        
+        # Analyze question intent
+        if any(word in question_lower for word in ['what', 'describe', 'see', 'show', 'content']):
+            # Descriptive question - focus on image content
+            answer = f"Based on my analysis of this image:\n\n{image_analysis}\n\nTo answer your question '{question}': The image contains visual elements that I've analyzed above. The technical and visual characteristics suggest this could be useful for educational purposes."
+            
+        elif any(word in question_lower for word in ['how', 'why', 'explain', 'meaning']):
+            # Explanatory question - provide educational context
+            answer = f"Here's my analysis to help explain what you're seeing:\n\n{image_analysis}\n\nRegarding '{question}': Based on the visual characteristics, this image appears to be educational content. The analysis above provides insights into its structure and potential use cases."
+            
+        elif any(word in question_lower for word in ['color', 'colours', 'bright', 'dark']):
+            # Color-related question - focus on visual characteristics
+            answer = f"Focusing on the visual aspects you asked about:\n\n{image_analysis}\n\nFor your question '{question}': The color and brightness analysis above should help answer your specific inquiry about the visual properties of this image."
+            
+        elif any(word in question_lower for word in ['size', 'dimension', 'resolution', 'quality']):
+            # Technical question - focus on technical details
+            answer = f"Here are the technical specifications:\n\n{image_analysis}\n\nRegarding '{question}': The technical details section above provides the specific information you're looking for about the image properties."
+            
+        else:
+            # General question - provide comprehensive analysis
+            answer = f"Here's a comprehensive analysis of your image:\n\n{image_analysis}\n\nFor your question '{question}': This analysis should provide the context needed to understand the image content and its potential educational applications."
         
         # Save conversation
         conversation = Conversation(
