@@ -36,7 +36,6 @@ app.add_middleware(
 )
 
 # Initialize database on startup
-@app.on_event("startup")
 async def startup_event():
     init_db()
 
@@ -304,10 +303,10 @@ async def summarize_text(
     max_length: int = Form(150),
     db: Session = Depends(get_db)
 ):
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+
     try:
-        if not text.strip():
-            raise HTTPException(status_code=400, detail="Text cannot be empty")
-        
         # Generate summary
         summary = generate_summary(text, max_length)
         
